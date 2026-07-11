@@ -47,3 +47,6 @@ wireguard-server/ssh
 
 # Ignore keypair file
 */ssh
+
+# Ignore wireguard backup code
+wireguard-server/backup/

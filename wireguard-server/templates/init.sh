@@ -1,29 +1,74 @@
 #!/bin/bash
+set -euo pipefail
 
-# Reference: https://docs.docker.com/engine/install/ubuntu/
-# Unistall all conflicting packages
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-  apt-get remove -y $pkg
-done
+dnf update -y
+dnf remove -y docker \
+  docker-client \
+  docker-client-latest \
+  docker-common \
+  docker-latest \
+  docker-latest-logrotate \
+  docker-logrotate \
+  docker-engine \
+  podman \
+  runc || true
 
-# Install using apt repository
-apt-get update -y
-apt-get install -y ca-certificates curl
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
+dnf install -y docker iptables
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL "https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-aarch64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-## Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
+systemctl enable --now docker
+usermod -aG docker ec2-user
 
-apt-get update -y
+cat >/etc/sysctl.d/99-wireguard-nat.conf <<'EOF'
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.src_valid_mark=1
+EOF
+sysctl --system
 
-## Install docker packages
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+mkdir -p /etc/docker/containers/wg-easy
+cat >/etc/docker/containers/wg-easy/docker-compose.yml <<'EOF'
+${docker_compose}
+EOF
 
-## Add ubuntu user to docker Group
-chmod 777 /var/run/docker.sock
-usermod -aG docker ubuntu
+cat >/usr/local/sbin/wireguard-nat-rules.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+iptables -t nat -C POSTROUTING -o eth0 -s ${vpc_cidr} -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -o eth0 -s ${vpc_cidr} -j MASQUERADE
+iptables -t nat -C POSTROUTING -o eth0 -s ${wireguard_ipv4_cidr} -j MASQUERADE 2>/dev/null || \
+  iptables -t nat -A POSTROUTING -o eth0 -s ${wireguard_ipv4_cidr} -j MASQUERADE
+iptables -C FORWARD -i eth0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -i eth0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -C FORWARD -i eth0 -o eth0 -s ${vpc_cidr} -j ACCEPT 2>/dev/null || \
+  iptables -A FORWARD -i eth0 -o eth0 -s ${vpc_cidr} -j ACCEPT
+if ip link show wg0 >/dev/null 2>&1; then
+  iptables -C FORWARD -i wg0 -o eth0 -s ${wireguard_ipv4_cidr} -j ACCEPT 2>/dev/null || \
+    iptables -A FORWARD -i wg0 -o eth0 -s ${wireguard_ipv4_cidr} -j ACCEPT
+fi
+EOF
+chmod +x /usr/local/sbin/wireguard-nat-rules.sh
+
+cat >/etc/systemd/system/wireguard-nat-rules.service <<'EOF'
+[Unit]
+Description=WireGuard NAT iptables rules
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wireguard-nat-rules.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now wireguard-nat-rules.service
+
+cd /etc/docker/containers/wg-easy
+docker compose up -d

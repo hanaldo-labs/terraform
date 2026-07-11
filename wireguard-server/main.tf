@@ -8,92 +8,188 @@ terraform {
 
   required_providers {
     aws = {
-      source = "hashicorp/aws"
+      source  = "hashicorp/aws"
       version = "5.51.1"
     }
   }
 }
 
-provider "aws" {}
-
-# Get AWS Account id and region for current user
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
-resource "aws_lightsail_key_pair" "wireguard_server" {
-  name = "wireguard-server-keypair"
-  public_key = file("${path.module}/ssh/lightsail_key.pub")
+provider "aws" {
+  region = "ap-northeast-2"
 }
 
-resource "aws_lightsail_static_ip" "wireguard_server" {
-  name = "wireguard-server-ip"
-}
+data "terraform_remote_state" "aws_common" {
+  backend = "s3"
 
-resource "aws_lightsail_instance" "wireguard_server" {
-  name = "wireguard-server"
-  availability_zone = "${data.aws_region.current.name}a"
-  blueprint_id = "ubuntu_20_04"
-  bundle_id = "nano_3_0"
-  ip_address_type = "ipv4" # only allow ipv4 (default: dualstack => ipv4 & ipv6)
-  key_pair_name = aws_lightsail_key_pair.wireguard_server.name
-  user_data = file("${path.module}/templates/init.sh")
-}
-
-resource "aws_lightsail_static_ip_attachment" "wireguard_server" {
-  instance_name = aws_lightsail_instance.wireguard_server.name
-  static_ip_name = aws_lightsail_static_ip.wireguard_server.name
-}
-
-resource "aws_lightsail_instance_public_ports" "wireguard_server" {
-  instance_name = aws_lightsail_instance.wireguard_server.name
-
-  port_info {
-    protocol = "tcp"
-    from_port = var.ui_port
-    to_port = var.ui_port
-    cidrs = var.public_access_allowed_ips
-  }
-
-  port_info {
-    protocol = "tcp"
-    from_port = 22
-    to_port = 22
-    cidrs = var.public_access_allowed_ips
-  }
-
-  port_info {
-    protocol = "udp"
-    from_port = 51820
-    to_port = 51820
-    cidrs = [ "0.0.0.0/0" ]
+  config = {
+    bucket = "hanaldo-terraform"
+    key    = "aws-common"
+    region = "ap-northeast-2"
   }
 }
 
-resource "null_resource" "set_up_wireguard" {
-  connection {
-    type = "ssh"
-    user = aws_lightsail_instance.wireguard_server.username
-    host = aws_lightsail_static_ip.wireguard_server.ip_address
-    private_key = file("${path.module}/ssh/lightsail_key")
+data "aws_ami" "al2023_arm64" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023*-kernel-*-arm64"]
   }
 
-  provisioner "file" {
-    content = templatefile("${path.module}/templates/docker-compose.yml", {
-      server_port = var.server_port
-      server_network = var.server_network
-      ui_port = var.ui_port
-      ui_password = var.ui_password
-      ui_traffic_stats = var.ui_traffic_stats
-      ui_chart_type = var.ui_chart_type
-    })
-
-    destination = "/home/ubuntu/docker-compose.yml"
+  filter {
+    name   = "architecture"
+    values = ["arm64"]
   }
 
-  provisioner "remote-exec" {
-    inline = [ 
-        "sleep 30",
-        "docker compose -f /home/ubuntu/docker-compose.yml up -d"
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+data "aws_vpc" "common" {
+  id = data.terraform_remote_state.aws_common.outputs.vpc_id
+}
+
+resource "aws_cloudwatch_log_group" "wg_easy" {
+  name              = var.log_group_name
+  retention_in_days = var.log_retention_in_days
+
+  tags = {
+    Name = "wireguard-server-wg-easy-logs"
+  }
+}
+
+resource "aws_eip" "wireguard_server" {
+  domain = "vpc"
+
+  tags = {
+    Name = "wireguard-server-eip"
+  }
+}
+
+resource "aws_security_group" "wireguard_server" {
+  name        = "wireguard-server-sg"
+  description = "Security group for WireGuard EC2 server"
+  vpc_id      = data.terraform_remote_state.aws_common.outputs.vpc_id
+
+  ingress {
+    description = "WireGuard"
+    protocol    = "udp"
+    from_port   = var.server_port
+    to_port     = var.server_port
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Outbound"
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "wireguard-server-sg"
+  }
+}
+
+resource "aws_iam_role" "wireguard_server" {
+  name = "wireguard-server-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
     ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "wireguard_server_ssm" {
+  role       = aws_iam_role.wireguard_server.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "wireguard_server_logs" {
+  name = "wireguard-server-logs"
+  role = aws_iam_role.wireguard_server.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "logs:CreateLogStream",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents"
+        ]
+        Effect   = "Allow"
+        Resource = "${aws_cloudwatch_log_group.wg_easy.arn}:*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "wireguard_server" {
+  name = "wireguard-server-profile"
+  role = aws_iam_role.wireguard_server.name
+}
+
+resource "aws_instance" "wireguard_server" {
+  ami                         = data.aws_ami.al2023_arm64.id
+  instance_type               = var.instance_type
+  subnet_id                   = data.terraform_remote_state.aws_common.outputs.public_subnet_ids[0]
+  vpc_security_group_ids      = [aws_security_group.wireguard_server.id]
+  iam_instance_profile        = aws_iam_instance_profile.wireguard_server.name
+  key_name                    = "common-key"
+  associate_public_ip_address = true
+  source_dest_check           = false
+  user_data_replace_on_change = true
+
+  user_data = templatefile("${path.module}/templates/init.sh", {
+    docker_compose = templatefile("${path.module}/templates/docker-compose.yml", {
+      init_host           = aws_eip.wireguard_server.public_ip
+      init_password       = var.init_password
+      init_username       = var.init_username
+      init_allowed_ips    = join(",", concat([data.aws_vpc.common.cidr_block, var.wireguard_ipv4_cidr], var.additional_wireguard_allowed_ips))
+      log_group_name      = aws_cloudwatch_log_group.wg_easy.name
+      region              = "ap-northeast-2"
+      server_port         = var.server_port
+      ui_port             = var.ui_port
+      wireguard_dns       = var.wireguard_dns
+      wireguard_ipv4_cidr = var.wireguard_ipv4_cidr
+      wireguard_ipv6_cidr = var.wireguard_ipv6_cidr
+    })
+    vpc_cidr            = data.aws_vpc.common.cidr_block
+    wireguard_ipv4_cidr = var.wireguard_ipv4_cidr
+  })
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
   }
+
+  tags = {
+    Name = "wireguard-server"
+  }
+}
+
+resource "aws_eip_association" "wireguard_server" {
+  instance_id   = aws_instance.wireguard_server.id
+  allocation_id = aws_eip.wireguard_server.id
+}
+
+resource "aws_route" "private_default_via_wireguard" {
+  count = var.enable_private_nat_route ? 1 : 0
+
+  route_table_id         = data.terraform_remote_state.aws_common.outputs.private_route_table_id
+  destination_cidr_block = "0.0.0.0/0"
+  network_interface_id   = aws_instance.wireguard_server.primary_network_interface_id
 }
