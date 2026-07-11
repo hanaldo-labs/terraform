@@ -1,0 +1,20 @@
+#cloud-config
+
+write_files:
+- content: |
+    net.ipv4.ip_forward=1
+    net.ipv4.conf.all.accept_redirects=0
+  path: /etc/sysctl.d/custom-ip-forwarding.conf
+- content: |
+    *nat
+    :PREROUTING ACCEPT [0:0]
+    :INPUT ACCEPT [0:0]
+    :OUTPUT ACCEPT [0:0]
+    :POSTROUTING ACCEPT [0:0]
+    -A POSTROUTING -o ens5 -s ${VPC_CIDR} -j MASQUERADE
+    COMMIT
+  path: /etc/iptables/custom.rules
+
+runcmd:
+  - sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
+  - iptables-restore < /etc/iptables/custom.rules

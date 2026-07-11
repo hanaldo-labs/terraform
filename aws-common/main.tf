@@ -8,7 +8,7 @@ terraform {
 
   required_providers {
     aws = {
-      source = "hashicorp/aws"
+      source  = "hashicorp/aws"
       version = "5.51.1"
     }
   }
@@ -22,7 +22,7 @@ provider "aws" {}
  */
 
 resource "aws_key_pair" "common" {
-  key_name = "common-key"
+  key_name   = "common-key"
   public_key = file("${path.module}/ssh/id_rsa.pub")
 }
 
@@ -48,7 +48,7 @@ resource "aws_iam_role" "eks_cluster" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cluster" {
-  role = aws_iam_role.eks_cluster.name
+  role       = aws_iam_role.eks_cluster.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
@@ -69,17 +69,17 @@ resource "aws_iam_role" "eks_node" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_node_worker" {
-  role = aws_iam_role.eks_node.name
+  role       = aws_iam_role.eks_node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
 resource "aws_iam_role_policy_attachment" "eks_node_ecr" {
-  role = aws_iam_role.eks_node.name
+  role       = aws_iam_role.eks_node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
 resource "aws_iam_role_policy_attachment" "eks_node_cni" {
-  role = aws_iam_role.eks_node.name
+  role       = aws_iam_role.eks_node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
@@ -93,12 +93,28 @@ module "zones" {
   version = "~> 3.0"
 
   zones = {
-    for k, _ in var.domains : k => {
-      comment = "Zones for ${k}"
+    for domain in var.domains : domain => {
+      comment = "Zones for ${domain}"
     }
   }
 
   tags = {
     ManagedBy = "Terraform"
   }
+}
+
+
+/*
+ * Common VPC
+ */
+
+
+module "network" {
+  source = "./network"
+
+  name                        = var.vpc-name
+  cidr                        = var.vpc_cidr
+  public_access_allowed_cidrs = var.public_access_allowed_cidrs
+  key_pair_name               = aws_key_pair.common.key_name
+  create_nat                  = var.create_nat
 }
