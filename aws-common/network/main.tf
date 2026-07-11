@@ -137,6 +137,15 @@ resource "aws_network_acl" "public" {
     cidr_block = var.cidr
   }
 
+  ingress {
+    rule_no    = 260
+    action     = "allow"
+    protocol   = "udp"
+    from_port  = 51820
+    to_port    = 51820
+    cidr_block = "0.0.0.0/0"
+  }
+
   egress {
     rule_no    = 100
     action     = "allow"
@@ -200,6 +209,15 @@ resource "aws_network_acl" "public" {
     from_port  = 1024
     to_port    = 65535
     cidr_block = var.cidr
+  }
+
+  egress {
+    rule_no    = 170
+    action     = "allow"
+    protocol   = "udp"
+    from_port  = 1024
+    to_port    = 65535
+    cidr_block = "0.0.0.0/0"
   }
 
   tags = merge(local.default_tags, {
