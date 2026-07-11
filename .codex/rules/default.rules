@@ -1,0 +1,37 @@
+# .codex/rules/default.rules
+
+# 프로덕션 terraform apply 차단
+prefix_rule(
+  pattern = ["terraform", ["apply", "destroy"]],
+  decision = "forbidden",
+  justification = "Codex가 직접 apply, destroy 하는 것을 방지한다.",
+  match = [
+    "terraform apply -var-file=terraform.tfvars",
+    "terraform destroy"
+  ],
+)
+
+# Git 읽기 전용 명령은 자동 허용
+prefix_rule(
+  pattern = ["git", ["status", "diff", "log"]],
+  decision = "allow",
+  justification = "Read-only git inspection is safe for routine work",
+  match = [
+    "git status",
+    "git diff",
+    "git log --oneline",
+  ],
+  not_match = [
+    "git reset --hard",
+  ],
+)
+
+# 파괴적 Git 명령 차단
+prefix_rule(
+  pattern = ["git", "reset", "--hard"],
+  decision = "forbidden",
+  justification = "Use a reviewed revert plan instead of destructive reset",
+  match = [
+    "git reset --hard",
+  ],
+)
