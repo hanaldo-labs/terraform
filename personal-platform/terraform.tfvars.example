@@ -1,0 +1,13 @@
+hcloud_token = "replace-me"
+
+project_name    = "personal-platform"
+server_name     = "personal-platform-01"
+server_type     = "cx33"
+server_location = "fsn1"
+server_image    = "ubuntu-24.04"
+
+ssh_public_key_path = "ssh/id_ed25519.pub"
+
+# Set this to a trusted /32 only for initial bootstrap.
+# After WireGuard access is confirmed, comment out this.
+allowed_ssh_cidrs = ["203.0.113.10/32"]
