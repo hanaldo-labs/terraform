@@ -70,5 +70,21 @@ EOF
 systemctl daemon-reload
 systemctl enable --now wireguard-nat-rules.service
 
+cat >/usr/local/sbin/wireguard-server-public-key <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+for _ in $(seq 1 30); do
+  if docker exec wg-easy wg show wg0 public-key 2>/dev/null; then
+    exit 0
+  fi
+
+  sleep 2
+done
+
+docker exec wg-easy wg show wg0 public-key
+EOF
+chmod +x /usr/local/sbin/wireguard-server-public-key
+
 cd /etc/docker/containers/wg-easy
 docker compose up -d

@@ -69,3 +69,9 @@ variable "log_retention_in_days" {
   default     = 30
   description = "Retention days for wg-easy CloudWatch Logs."
 }
+
+variable "ami_id" {
+  type        = string
+  description = "AMI ID for Wireguard server."
+  default     = ""
+}

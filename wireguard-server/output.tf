@@ -14,6 +14,10 @@ output "wireguard_ui_bootstrap_command" {
   value = "aws ssm start-session --target ${aws_instance.wireguard_server.id} --document-name AWS-StartPortForwardingSession --parameters portNumber=${var.ui_port},localPortNumber=${var.ui_port}"
 }
 
+output "wireguard_server_public_key_command" {
+  value = "aws ssm start-session --target ${aws_instance.wireguard_server.id} --document-name AWS-StartInteractiveCommand --parameters command='sudo /usr/local/sbin/wireguard-server-public-key'"
+}
+
 output "wg_easy_log_group_name" {
   value = aws_cloudwatch_log_group.wg_easy.name
 }

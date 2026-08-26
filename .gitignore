@@ -42,11 +42,10 @@ builds/
 
 run.sh
 
-# Ignore lightsail keypair file
-wireguard-server/ssh
-
-# Ignore keypair file
-*/ssh
+# Ignore private keypair files, but keep public keys reviewable.
+*/ssh/*
+!*/ssh/
+!*/ssh/*.pub
 
 # Ignore wireguard backup code
 wireguard-server/backup/

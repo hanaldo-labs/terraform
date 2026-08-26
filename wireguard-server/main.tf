@@ -143,7 +143,7 @@ resource "aws_iam_instance_profile" "wireguard_server" {
 }
 
 resource "aws_instance" "wireguard_server" {
-  ami                         = data.aws_ami.al2023_arm64.id
+  ami                         = var.ami_id == "" ? data.aws_ami.al2023_arm64.id : var.ami_id
   instance_type               = var.instance_type
   subnet_id                   = data.terraform_remote_state.aws_common.outputs.public_subnet_ids[0]
   vpc_security_group_ids      = [aws_security_group.wireguard_server.id]
@@ -151,7 +151,7 @@ resource "aws_instance" "wireguard_server" {
   key_name                    = "common-key"
   associate_public_ip_address = true
   source_dest_check           = false
-  user_data_replace_on_change = true
+  # user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/templates/init.sh", {
     docker_compose = templatefile("${path.module}/templates/docker-compose.yml", {
